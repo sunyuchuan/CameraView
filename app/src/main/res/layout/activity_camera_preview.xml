@@ -1,0 +1,55 @@
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical" >
+
+    <com.example.ffcmd.ffcmd_demo.view.CameraView
+        android:id="@+id/CameraView"
+        android:layout_width="320dp"
+        android:layout_height="320dp"
+        android:layout_above="@+id/bar" />
+
+    <ImageView
+        android:id="@+id/img_switch_camera"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignParentRight="true"
+        android:padding="10dp"
+        android:src="@drawable/ic_switch_camera" />
+
+    <LinearLayout
+        android:id="@+id/bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_alignParentBottom="true"
+        android:background="#000000"
+        android:gravity="center_vertical"
+        android:orientation="horizontal" >
+
+        <Button
+            android:id="@+id/button_choose_filter"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Choose Filter" />
+
+        <Button
+            android:id="@+id/button_preview"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="preview" />
+
+        <ImageButton
+            android:id="@+id/button_record"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:src="@drawable/record_video" />
+    </LinearLayout>
+
+    <include
+        android:id="@+id/filter_list"
+        android:layout_above="@id/bar"
+        layout="@layout/base_filter_layout"
+        android:visibility="gone"
+        android:layout_width="match_parent"
+        android:layout_height="80dp"/>
+</RelativeLayout>

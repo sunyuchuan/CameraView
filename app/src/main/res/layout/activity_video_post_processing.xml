@@ -1,0 +1,29 @@
+<LinearLayout
+        xmlns:android="http://schemas.android.com/apk/res/android"
+        android:id="@+id/bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_alignParentBottom="true"
+        android:background="#000000"
+        android:gravity="center_vertical"
+        android:orientation="vertical" >
+
+        <Button
+            android:id="@+id/button_camera_prew"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="camera preview" />
+
+        <Button
+            android:id="@+id/button_ffmpeg_pip"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="ffmpeg pip" />
+
+        <Button
+            android:id="@+id/button_ffmpeg_concat"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="ffmpeg concat" />
+</LinearLayout>
+

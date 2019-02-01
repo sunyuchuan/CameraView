@@ -1,0 +1,6 @@
+<resources>
+    <string name="app_name">ffcmd_demo</string>
+    <string name="filter_none">无</string>
+    <string name="filter_beauty">磨皮美颜</string>
+
+</resources>
