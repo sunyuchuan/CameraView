@@ -53,20 +53,20 @@ public class VideoPostProcessingActivity extends AppCompatActivity implements Vi
 
     private void resume() {
         if(mVideoSynthesis == null) {
-            mVideoSynthesis = VideoSynthesis.newInstance();
+            mVideoSynthesis = VideoSynthesis.getInstance();
 
-            mRawVideoMetaData = mVideoSynthesis.new MetaData();
+            mRawVideoMetaData = new VideoSynthesis.MetaData();
             mRawVideoMetaData.mType = VideoSynthesis.RAW_VIDEO_TYPE;
             mRawVideoMetaData.mPath = "/sdcard/y_bg.mp4";
             mMetaDataList.add(mRawVideoMetaData);
 
-            mCameraVideoMetaData = mVideoSynthesis.new MetaData();
+            mCameraVideoMetaData = new VideoSynthesis.MetaData();
             mCameraVideoMetaData.mType = VideoSynthesis.CAMERA_VIDEO_TYPE;
             mCameraVideoMetaData.mPath = "/sdcard/y_test.mp4";
-            mCameraVideoMetaData.mRect = mVideoSynthesis.new Rect(0.1f, 0.1f, 0.4f, 0.4f);
+            mCameraVideoMetaData.mRect = new VideoSynthesis.Rect(0.1f, 0.1f, 0.4f, 0.4f);
             mMetaDataList.add(mCameraVideoMetaData);
 
-            mWatermarkMetaData = mVideoSynthesis.new MetaData();
+            mWatermarkMetaData = new VideoSynthesis.MetaData();
             mWatermarkMetaData.mType = VideoSynthesis.WATERMARK_TYPE;
             mWatermarkMetaData.mPath = "/sdcard/watermark_white.jpg";
             mMetaDataList.add(mWatermarkMetaData);

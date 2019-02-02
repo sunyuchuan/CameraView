@@ -1,148 +1,308 @@
 package com.example.ffcmd.ffcmd_demo.co_production;
 
-import android.os.Build;
 import android.text.TextUtils;
 import android.util.Log;
 
 import com.example.ffcmd.ffcmd_demo.FFmpegMediaMetadataRetriever;
-import com.example.ffcmd.ffcmd_demo.IjkLibLoader;
-import com.example.ffcmd.ffcmd_demo.co_production.ffmpegcmd.FFmpegCommand;
-import com.example.ffcmd.ffcmd_demo.co_production.ffmpegcmd.IFFMpegCommandListener;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Created by sunyc on 18-11-27.
  */
 
 public class VideoSynthesis {
-    private static final int PIXEL_DIFF = 3;
-    private static final String TAG = "VideoSynthesis";
     public static final String RAW_VIDEO_TYPE = "rawVideo";
     public static final String CAMERA_VIDEO_TYPE = "cameraVideo";
     public static final String WATERMARK_TYPE = "watermark";
-    private static VideoSynthesis mInstance = null;
-    private FFmpegCommand ffcmd = null;
-    private IVideoSynthesisListener mListener = null;
-    private MetaData mRawVideoMetaData = null;
-    private MetaData mCameraVideoMetaData = null;
-    private MetaData mWatermarkMetaData = null;
-    private FFCmdType mFFCmdType = FFCmdType.NONE;
-    private PipParams mPipParams = null;
-    private String mOutputPath = null;
-    private String mConcatListFilePath = null;
-    private static boolean mIsLibLoaded = false;
-    private int mBitrateDefault = 700;
-    private int mWidthxHeightDefault = 540*960;
-    private int mBitrate = 700;
-    private boolean needRelease = false;
+    public static final int XM_LOG_UNKNOWN = 0;
+    public static final int XM_LOG_DEFAULT = 1;
+    public static final int XM_LOG_VERBOSE = 2;
+    public static final int XM_LOG_DEBUG = 3;
+    public static final int XM_LOG_INFO = 4;
+    public static final int XM_LOG_WARN = 5;
+    public static final int XM_LOG_ERROR = 6;
+    public static final int XM_LOG_FATAL = 7;
+    public static final int XM_LOG_SILENT = 8;
 
-    private static final IjkLibLoader sLocalLibLoader = new IjkLibLoader() {
-        @Override
-        public void loadLibrary(String libName) throws UnsatisfiedLinkError, SecurityException {
-            String ABI = Build.CPU_ABI;
-            Log.d(TAG, "ABI " + ABI);
-            System.loadLibrary(libName + "-" + ABI);
-        }
-    };
+    private static final int PIXEL_DIFF = 2;
+    private static final String TAG = "VideoSynthesis";
+    private FFmpegCommand mFFcmd;
+    private IVideoSynthesisListener mListener;
+    public static final int PURE_AUDIO = 0;
+    public static final int PURE_VIDEO = 1;
+    public static final int AUDIO_VIDEO = 2;
+    private volatile static VideoSynthesis sInstance = null;
 
-    private static void loadLibrariesOnce(IjkLibLoader libLoader) {
-        synchronized (VideoSynthesis.class) {
-            if (!mIsLibLoaded) {
-                if (libLoader == null)
-                    libLoader = sLocalLibLoader;
+    private List<String> mCmdParams;
+    private long mDurationRef;
+    private String mConcatFilePath;
+    private volatile boolean mRunning = false;
 
-                libLoader.loadLibrary("ijkffmpeg");
-                libLoader.loadLibrary("ijksdl" );
-                libLoader.loadLibrary("xmffcmd");
-                mIsLibLoaded = true;
+    public static VideoSynthesis getInstance() {
+        if (sInstance == null) {
+            synchronized (VideoSynthesis.class) {
+                if (sInstance == null) {
+                    sInstance = new VideoSynthesis();
+                }
             }
         }
-    }
-
-    public static VideoSynthesis newInstance() {
-        mInstance = new VideoSynthesis();
-        return mInstance;
+        return sInstance;
     }
 
     private VideoSynthesis() {
-        loadLibrariesOnce(sLocalLibLoader);
-
-        ffcmd = new FFmpegCommand();
-        ffcmd.setListener(onFFMpegCmdListener);
+        mFFcmd = new FFmpegCommand();
+        mFFcmd.setListener(mOnFFMpegCmdListener);
+        mFFcmd.setLogLevel(XM_LOG_WARN);
     }
 
-    /*
-    * Video stitching synthesis of the same encoding format
-    * params:
-    * inputVideoList, List of videos that need to be stitched
-    * outputpath, The video path of the generated video, including the file name
-    * IVideoSynthesisListener, Callback.
-    */
-    public void videoConcat(List<String> inputVideoList, String outputpath, IVideoSynthesisListener l) {
-        if(!ConcatInputParamsisValid(inputVideoList, outputpath))
-        {
-            Log.e(TAG, "video concat Input Params is inValid, exit");
-            return;
-        }
-        mListener = l;
-        mOutputPath = outputpath;
-        mConcatListFilePath = createConcatListFile(inputVideoList, outputpath);
-        mFFCmdType = FFCmdType.VIDEO_CONCAT;
-        start();
-    }
-
-    /*
-    * picture-in-picture video synthesis
-    * params:
-    * list, input videos and watermarks etc
-    * output, The video path of the generated video, including the file name
-    * IVideoSynthesisListener, Callback.
-    */
-    public void pipMergeVideo(List<MetaData> list, String output, IVideoSynthesisListener l) {
-        mListener = l;
-        mOutputPath = output;
-        for (MetaData data : list) {
-            if (data.mType.equals(RAW_VIDEO_TYPE)) {
-                mRawVideoMetaData = data;
-            } else if (data.mType.equals(CAMERA_VIDEO_TYPE)) {
-                mCameraVideoMetaData = data;
-            } else if (data.mType.equals(WATERMARK_TYPE)) {
-                mWatermarkMetaData = data;
+    /**
+     * Video stitching synthesis of the same encoding format
+     * @param inputVideoList List of videos that need to be stitched
+     * @param outputpath The video path of the generated video, including the file name
+     * @param l IVideoSynthesisListener, Callback.
+     * @throws IllegalArgumentException
+     * @throws IllegalStateException
+     */
+    public void videoConcat(List<String> inputVideoList, String outputpath, IVideoSynthesisListener l) throws IllegalArgumentException,IllegalStateException {
+        synchronized (this) {
+            Log.i(TAG, "videoConcat output path " + outputpath);
+            if ((inputVideoList == null || TextUtils.isEmpty(outputpath))) {
+                Log.e(TAG, "videoConcat : 1 Input Params is inValid, exit");
+                throw new IllegalArgumentException();
             }
-        }
 
-        if(!PipInputParamsisValid())
-        {
-            Log.e(TAG, "Pip Input Params is inValid, exit");
-            return;
-        }
-        if(!CalculatePipParameters())
-        {
-            Log.e(TAG, "Pip Input Params is inValid, exit");
-            return;
-        }
+            if (getStatus()) {
+                Log.d(TAG, "videoConcat : ffmpeg instance is runing, pls waiting ffmpeg end");
+                throw new IllegalStateException();
+            }
 
-        mFFCmdType = FFCmdType.PIP_MERGE;
-        mBitrate = (int) (((float)(mPipParams.raw_w*mPipParams.raw_h)/(float)mWidthxHeightDefault)*mBitrateDefault);
-        start();
+            for (String s : inputVideoList) {
+                try {
+                    FFmpegMediaMetadataRetriever r = new FFmpegMediaMetadataRetriever();
+                    r.setDataSource(s);
+                    FFmpegMediaMetadataRetriever.Metadata data = r.getMetadata();
+                    mDurationRef += data.getLong(FFmpegMediaMetadataRetriever.METADATA_KEY_DURATION);
+                } catch (IllegalArgumentException e) {
+                    Log.e(TAG, "videoConcat : 2 Input Params is inValid, exit");
+                    throw new IllegalArgumentException();
+                }
+            }
+
+            mListener = l;
+            mConcatFilePath = createConcatListFile(inputVideoList, outputpath);
+            if (mConcatFilePath == null) {
+                Log.e(TAG, "videoConcat : ffmpeg concat input file creation failed");
+                throw new IllegalArgumentException();
+            }
+
+            int concatType = PURE_VIDEO;
+            mCmdParams = new ArrayList<>();
+            mCmdParams.add("ffmpeg");
+            mCmdParams.add("-f");
+            mCmdParams.add("concat");
+            mCmdParams.add("-safe");
+            mCmdParams.add("0");
+            mCmdParams.add("-i");
+            mCmdParams.add(mConcatFilePath);
+            if (concatType == PURE_VIDEO) {
+                mCmdParams.add("-an");
+                mCmdParams.add("-c:v");
+                mCmdParams.add("copy");
+            } else if (concatType == PURE_AUDIO) {
+                mCmdParams.add("-vn");
+                mCmdParams.add("-c:a");
+                mCmdParams.add("copy");
+            } else {
+                mCmdParams.add("-an");
+                mCmdParams.add("-c:v");
+                mCmdParams.add("copy");
+            }
+            mCmdParams.add("-movflags");
+            mCmdParams.add("faststart");
+            mCmdParams.add("-f");
+            mCmdParams.add("mp4");
+            mCmdParams.add("-y");
+            mCmdParams.add(outputpath);
+            start();
+        }
     }
 
-    private boolean ConcatInputParamsisValid(List<String> inputVideoList, String outputpath) {
-        if(inputVideoList == null || TextUtils.isEmpty(outputpath))
-            return false;
-        return true;
+    /**
+     * picture-in-picture video synthesis
+     * @param list input videos and watermarks etc
+     * @param output The video path of the generated video, including the file name
+     * @param l IVideoSynthesisListener, Callback.
+     * @throws IllegalArgumentException
+     * @throws IllegalStateException
+     */
+    public void pipMergeVideo(List<MetaData> list, String output, IVideoSynthesisListener l) throws IllegalArgumentException,IllegalStateException {
+        synchronized (this) {
+            Log.i(TAG, "pipMergeVideo output path " + output);
+            MetaData rawVideoMetaData = null;
+            MetaData cameraVideoMetaData = null;
+            MetaData watermarkMetaData = null;
+            final int bitrateDefault = 700;
+            final int resDefault = 540*960;
+            for (MetaData data : list) {
+                if (data.mType.equals(RAW_VIDEO_TYPE)) {
+                    rawVideoMetaData = data;
+                } else if (data.mType.equals(CAMERA_VIDEO_TYPE)) {
+                    cameraVideoMetaData = data;
+                } else if (data.mType.equals(WATERMARK_TYPE)) {
+                    watermarkMetaData = data;
+                }
+            }
+
+            if (rawVideoMetaData == null
+                    || cameraVideoMetaData == null
+                    || cameraVideoMetaData.mRect == null
+                    || watermarkMetaData == null
+                    || TextUtils.isEmpty(rawVideoMetaData.mPath)
+                    || TextUtils.isEmpty(cameraVideoMetaData.mPath)
+                    || TextUtils.isEmpty(watermarkMetaData.mPath)
+                    || TextUtils.isEmpty(output)) {
+                Log.e(TAG, "Pip : Input Params is inValid, exit");
+                throw new IllegalArgumentException();
+            }
+
+            PipParams params = CalculatePipParameters(rawVideoMetaData, cameraVideoMetaData);
+            if (params == null) {
+                Log.e(TAG, "Pip : Input Params is inValid Calc PipParams Error, exit");
+                throw new IllegalArgumentException();
+            }
+
+            if (getStatus()) {
+                Log.d(TAG, "Pip : ffmpeg instance is runing, pls waiting ffmpeg end");
+                throw new IllegalStateException();
+            }
+
+            mListener = l;
+            mDurationRef = params.raw_duration;
+            mCmdParams = new ArrayList<>();
+            mCmdParams.add("ffmpeg");
+            mCmdParams.add("-i");
+            mCmdParams.add(rawVideoMetaData.mPath);
+            mCmdParams.add("-i");
+            mCmdParams.add(cameraVideoMetaData.mPath);
+            mCmdParams.add("-i");
+            mCmdParams.add(watermarkMetaData.mPath);
+            mCmdParams.add("-filter_complex");
+            mCmdParams.add("[0:v] fps=15,scale="+params.raw_w+":"+params.raw_h+" [base];" +
+                            "[1:v] fps=15,scale="+params.camera_w+":"+params.camera_h+" [camera];" +
+                            "[2:v] scale="+params.watermark_w+":"+params.watermark_h+" [watermark];" +
+                            "[watermark][camera] overlay=x="+params.camera_overlay_x+":y="+params.camera_overlay_y+" [tmp];" +
+                            "[base][tmp] overlay=repeatlast=0:x="+params.watermark_overlay_x+":y="+params.watermark_overlay_y+" [vout]");
+            mCmdParams.add("-map");
+            mCmdParams.add("[vout]");
+            mCmdParams.add("-c:v");
+            mCmdParams.add("libx264");
+            mCmdParams.add("-tune");
+            mCmdParams.add("zerolatency");
+            mCmdParams.add("-r");
+            mCmdParams.add("15");
+            mCmdParams.add("-force_key_frames");
+            mCmdParams.add("expr:gte(t,n_forced*5)");
+            mCmdParams.add("-pix_fmt");
+            mCmdParams.add("yuv420p");
+            mCmdParams.add("-vb");
+            mCmdParams.add((int) (((float) (params.raw_w * params.raw_h) / (float) resDefault) * bitrateDefault) + "k");
+            mCmdParams.add("-bf");
+            mCmdParams.add("0");
+            mCmdParams.add("-shortest");
+            mCmdParams.add("-movflags");
+            mCmdParams.add("faststart");
+            mCmdParams.add("-preset");
+            mCmdParams.add("veryfast");
+            mCmdParams.add("-crf");
+            mCmdParams.add("23.0");
+            mCmdParams.add("-f");
+            mCmdParams.add("mp4");
+            mCmdParams.add("-y");
+            mCmdParams.add(output);
+            start();
+        }
+    }
+
+    /**
+     * burn the srt subtile to video,must have ttf font.
+     * @param params  the key/value map to set rawvideopath/srt subtitle path/font path/font size/font color and so on
+     * @param outPath where the output file you want store
+     * @param l       the observer about error/progress and so on
+     * @throws IllegalArgumentException
+     * @throws IllegalStateException
+     */
+    public void burnSubtitle(HashMap<String, String> params, String outPath, IVideoSynthesisListener l) throws IllegalArgumentException,IllegalStateException {
+        synchronized (this) {
+            Log.i(TAG, "burnSubtitle output path " + outPath);
+            String rawVideo = null;
+            String srt = null;
+            String fontPath = null;
+            String fontName = null;
+            int fontSize = 36;
+            for (Map.Entry<String, String> entry : params.entrySet()) {
+                Log.d(TAG, "Key = " + entry.getKey() + ", Value = " + entry.getValue());
+                if (entry.getKey().equals("rawVideo")) {
+                    rawVideo = entry.getValue();
+                } else if (entry.getKey().equals("srt")) {
+                    srt = entry.getValue();
+                } else if (entry.getKey().equals("fontSize")) {
+                    fontSize = Integer.parseInt(entry.getValue());
+                } else if (entry.getKey().equals("fontPath")) {
+                    fontPath = entry.getValue();
+                } else if (entry.getKey().equals("fontName")) {
+                    fontName = entry.getValue();
+                }
+            }
+
+            if (rawVideo == null || srt == null || fontName == null || fontPath == null) {
+                Log.e(TAG, "burnSubtitle : Input Params is inValid, exit");
+                throw new IllegalArgumentException();
+            }
+
+            if (getStatus()) {
+                Log.d(TAG, "burnSubtitle : ffmpeg instance is runing, pls waiting ffmpeg end");
+                throw new IllegalStateException();
+            }
+
+            try {
+                FFmpegMediaMetadataRetriever r = new FFmpegMediaMetadataRetriever();
+                r.setDataSource(rawVideo);
+                FFmpegMediaMetadataRetriever.Metadata data = r.getMetadata();
+                mDurationRef = data.getLong(FFmpegMediaMetadataRetriever.METADATA_KEY_DURATION);
+            } catch (IllegalArgumentException e) {
+                Log.e(TAG, "burnSubtitle : Input Params is inValid, exit");
+                throw new IllegalArgumentException();
+            }
+
+            mListener = l;
+            mCmdParams = new ArrayList<>();
+            mCmdParams.add("ffmpeg");
+            mCmdParams.add("-i");
+            mCmdParams.add(rawVideo);
+            mCmdParams.add("-acodec");
+            mCmdParams.add("copy");
+            mCmdParams.add("-preset");
+            mCmdParams.add("veryfast");
+            mCmdParams.add("-crf");
+            mCmdParams.add("23.0");
+            mCmdParams.add("-vf");
+            mCmdParams.add("subtitles=" + srt + ":" + "fontsdir=" + fontPath + ":force_style='FontName=" + fontName + "'");
+            mCmdParams.add("-f");
+            mCmdParams.add("mp4");
+            mCmdParams.add("-y");
+            mCmdParams.add(outPath);
+            start();
+        }
     }
 
     private String createConcatListFile(List<String> inputVideoList, String outputpath) {
-        if(!ConcatInputParamsisValid(inputVideoList, outputpath))
-        {
-            Log.e(TAG, "video concat Input Params is inValid, exit");
-            return null;
-        }
-
         String listFilePath = outputpath.substring(0, outputpath.lastIndexOf("/") + 1);
         String listFileName = outputpath.substring(outputpath.lastIndexOf("/") + 1, outputpath.lastIndexOf("."));
         String concatListFilePath = listFilePath + listFileName + ".txt";
@@ -169,63 +329,71 @@ public class VideoSynthesis {
             file.setReadable(true, false);
             FileOutputStream outStream = new FileOutputStream(file);
             outStream.write("ffconcat version 1.0\n".getBytes());
-            for(String str : inputVideoList)
-            {
-                Log.i(TAG, "input video path " + str);
+            for (String str : inputVideoList)  {
+                Log.i(TAG, "ffconcat input video path " + str);
                 outStream.write(("file \'" + str + "\'\n").getBytes());
             }
             outStream.close();
-        } catch (Exception e) {
+        } catch (IOException e) {
             e.printStackTrace();
             return null;
         }
         return concatListFilePath;
     }
 
-    private boolean PipInputParamsisValid() {
-        if(mRawVideoMetaData == null
-                || mCameraVideoMetaData == null
-                || mCameraVideoMetaData.mRect == null
-                || mWatermarkMetaData == null
-                || TextUtils.isEmpty(mRawVideoMetaData.mPath)
-                || TextUtils.isEmpty(mCameraVideoMetaData.mPath)
-                || TextUtils.isEmpty(mWatermarkMetaData.mPath)
-                || TextUtils.isEmpty(mOutputPath))
-            return false;
-        return true;
-    }
+    private PipParams CalculatePipParameters(MetaData rawVideo, MetaData cameraVideo) {
+        PipParams pipParams = new PipParams();
 
-    private Boolean CalculatePipParameters() {
-        if(!PipInputParamsisValid())
-        {
-            Log.e(TAG, "Pip Input Params is inValid, exit");
-            return false;
+        /* got rawvideo metadata */
+        FFmpegMediaMetadataRetriever mediaMetadataRetriever = new FFmpegMediaMetadataRetriever();
+        try {
+            mediaMetadataRetriever.setDataSource(rawVideo.mPath);
+        } catch (Exception e) {
+            mediaMetadataRetriever.release();
+            e.printStackTrace();
+            return null;
         }
-        mPipParams = new PipParams();
-        //FFmpegMediaMetadataRetriever mediaMetadataRetriever = new FFmpegMediaMetadataRetriever(sLocalLibLoader);
+        FFmpegMediaMetadataRetriever.Metadata data = mediaMetadataRetriever.getMetadata();
+        if (data != null) {
+            pipParams.raw_w = data.getInt(FFmpegMediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH);
+            pipParams.raw_h = data.getInt(FFmpegMediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT);
+            pipParams.raw_duration = data.getLong(FFmpegMediaMetadataRetriever.METADATA_KEY_DURATION);
+        }
+        mediaMetadataRetriever.release();
 
-        //mediaMetadataRetriever.setDataSource(mRawVideoMetaData.mPath);
-        //FFmpegMediaMetadataRetriever.Metadata data = mediaMetadataRetriever.getMetadata();
+        if (data == null || pipParams.raw_w <= 0 || pipParams.raw_h <= 0) {
+            Log.e(TAG, "Raw Video MetaData w " + pipParams.raw_w + " ,h " + pipParams.raw_h);
+            return null;
+        }
 
-        mPipParams.raw_w = 1280;//data.getInt(FFmpegMediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH);
-        mPipParams.raw_h = 720;//data.getInt(FFmpegMediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT);
-        mPipParams.raw_duration = 111000;//data.getLong(FFmpegMediaMetadataRetriever.METADATA_KEY_DURATION);
+        /* got camera metadata */
+        mediaMetadataRetriever = new FFmpegMediaMetadataRetriever();
+        try {
+            mediaMetadataRetriever.setDataSource(cameraVideo.mPath);
+        } catch (Exception e) {
+            mediaMetadataRetriever.release();
+            e.printStackTrace();
+            return null;
+        }
+        data = mediaMetadataRetriever.getMetadata();
+        if (data != null) {
+            pipParams.camera_w = data.getInt(FFmpegMediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH);
+            pipParams.camera_h = data.getInt(FFmpegMediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT);
+            pipParams.camera_duration = data.getLong(FFmpegMediaMetadataRetriever.METADATA_KEY_DURATION);
+        }
+        mediaMetadataRetriever.release();
 
-        //mediaMetadataRetriever.setDataSource(mCameraVideoMetaData.mPath);
-        //data = mediaMetadataRetriever.getMetadata();
-        mPipParams.camera_w = 640;//data.getInt(FFmpegMediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH);
-        mPipParams.camera_h = 640;//data.getInt(FFmpegMediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT);
-        mPipParams.camera_duration = 9190;//data.getLong(FFmpegMediaMetadataRetriever.METADATA_KEY_DURATION);
+        if (data == null || pipParams.camera_w <= 0 || pipParams.camera_h <= 0) {
+            Log.e(TAG, "Camera Video MetaData w " + pipParams.camera_w + ",h " + pipParams.camera_h);
+            return null;
+        }
 
-        int camera_rect_w = (int) (mPipParams.raw_w * (mCameraVideoMetaData.mRect.right_x - mCameraVideoMetaData.mRect.left_x));
-        int camera_rect_h = (int) (mPipParams.raw_h * (mCameraVideoMetaData.mRect.right_y - mCameraVideoMetaData.mRect.left_y));
-        mPipParams.camera_overlay_x = (int) (mPipParams.raw_w * mCameraVideoMetaData.mRect.left_x);
-        mPipParams.camera_overlay_y = (int) (mPipParams.raw_h - mPipParams.raw_h * mCameraVideoMetaData.mRect.right_y);
+        /* calc camera and decor coordinate */
+        int camera_rect_w = (int) (pipParams.raw_w * (cameraVideo.mRect.right - cameraVideo.mRect.left));
+        int camera_rect_h = (int) (pipParams.raw_h * (cameraVideo.mRect.top - cameraVideo.mRect.bottom));
         float camera_rect_aspect_ratio = (float)camera_rect_w/(float)camera_rect_h;
-        float camera_video_aspect_ratio = (float)mPipParams.camera_w/(float)mPipParams.camera_h;
-
-        if(camera_video_aspect_ratio > camera_rect_aspect_ratio)
-        {
+        float camera_video_aspect_ratio = (float)pipParams.camera_w/(float)pipParams.camera_h;
+        if (camera_video_aspect_ratio > camera_rect_aspect_ratio) {
             //int camera_overlay_y_diff = camera_rect_h - (int) ((float)camera_rect_w / camera_video_aspect_ratio);
             //mPipParams.camera_overlay_y += camera_overlay_y_diff/2;
             camera_rect_h = (int) ((float)camera_rect_w / camera_video_aspect_ratio);
@@ -234,117 +402,107 @@ public class VideoSynthesis {
             //mPipParams.camera_overlay_x += camera_overlay_x_diff/2;
             camera_rect_w = (int) ((float)camera_rect_h * camera_video_aspect_ratio);
         }
-        mPipParams.camera_w = camera_rect_w;
-        mPipParams.camera_h = camera_rect_h;
+        pipParams.camera_w = camera_rect_w;
+        pipParams.camera_h = camera_rect_h;
 
-        mPipParams.watermark_w = mPipParams.camera_w + PIXEL_DIFF*2;
-        mPipParams.watermark_h = mPipParams.camera_h + PIXEL_DIFF*2;
-        mPipParams.watermark_overlay_x = mPipParams.camera_overlay_x - PIXEL_DIFF;
-        mPipParams.watermark_overlay_y = mPipParams.camera_overlay_y - PIXEL_DIFF;
+        pipParams.watermark_w = pipParams.camera_w + PIXEL_DIFF * 2;
+        pipParams.watermark_h = pipParams.camera_h + PIXEL_DIFF * 2;
+        pipParams.watermark_overlay_x = (int) (pipParams.raw_w * cameraVideo.mRect.left) - PIXEL_DIFF;
+        pipParams.watermark_overlay_y = (int) (pipParams.raw_h - pipParams.raw_h * cameraVideo.mRect.top) - PIXEL_DIFF;
+        pipParams.watermark_overlay_x = align(pipParams.watermark_overlay_x, 2);
+        pipParams.watermark_overlay_y = align(pipParams.watermark_overlay_y, 2);
 
-        return true;
+        pipParams.camera_overlay_x = PIXEL_DIFF;
+        pipParams.camera_overlay_y = PIXEL_DIFF;
+        return pipParams;
+    }
+
+    private int align(int x, int align) {
+       return ((( x ) + (align) - 1) / (align) * (align));
     }
 
     private void start() {
-        if(ffcmd != null) {
-            ffcmd.prepareAsync();
-            ffcmd.setStatus(true);
+        if (mFFcmd != null) {
+            mFFcmd.prepareAsync();
+            setStatus(true);
         }
     }
 
-    /*
+    /**
     *Stop video synthesis in running,
     *including stitching and picture-in-picture
     */
     public void stop() {
-        if(ffcmd != null) {
-            ffcmd.stop();
-            needRelease = false;
-        }
-    }
-
-    /*Release the instance after stopping the video synthesis*/
-    public void release() {
-        if(ffcmd != null) {
-            if(ffcmd.getStatus()) {
-                ffcmd.stop();
-                needRelease = true;
-            } else {
-                ffcmd.release();
-                ffcmd.setListener(null);
-                ffcmd = null;
+        synchronized (this) {
+            if (mFFcmd != null) {
+                mFFcmd.stop();
             }
         }
-        mInstance = null;
     }
 
-    private IFFMpegCommandListener onFFMpegCmdListener = new IFFMpegCommandListener() {
+    /**
+     * Release the instance after stopping the video synthesis
+     */
+    public void release() {
+        synchronized (this) {
+            if (mFFcmd != null) {
+                mFFcmd.release();
+                mFFcmd.setListener(null);
+            }
+            mFFcmd = null;
+            sInstance = null;
+        }
+    }
+
+    private IFFMpegCommandListener mOnFFMpegCmdListener = new IFFMpegCommandListener() {
         @Override
         public void onInfo(int arg1, int arg2, Object obj) {
             switch (arg1) {
-                /*The native layer ffmepg is ready to start synthesis*/
+                /*The native layer ffmpeg is ready to start synthesis*/
                 case FFmpegCommand.FFCMD_INFO_PREPARED:
-                    Log.d(TAG, "XMFFmpegCommand prepared");
-                    if(ffcmd != null) {
-                        ffcmd.setStatus(true);
-                    }
-                    FFCmdStart(mFFCmdType);
+                    Log.i(TAG, "XMFFmpegCommand prepared");
+                    FFMpegCmdRun();
                     break;
 
-                /*Native layer ffmepg has started*/
+                /*Native layer ffmpeg has started*/
                 case FFmpegCommand.FFCMD_INFO_STARTED:
-                    Log.d(TAG, "XMFFmpegCommand start");
-                    if(mListener != null)
+                    Log.i(TAG, "XMFFmpegCommand start");
+                    if (mListener != null)
                         mListener.onStarted();
                     break;
 
                 /*video synthetic percentage*/
                 case FFmpegCommand.FFCMD_INFO_PROGRESS:
-                    Log.d(TAG, "XMFFmpegCommand progress " + arg2);
-                    if(mFFCmdType == FFCmdType.PIP_MERGE
-                            && mPipParams != null
-                            && mListener != null
-                            && mPipParams.raw_duration != 0) {
-                        int progress = (int) (100 * ((float) arg2 / (float) mPipParams.raw_duration));
+                    if (mListener != null && mDurationRef != 0) {
+                        int progress = (int) (100 * ((float) arg2 / (float) mDurationRef));
+                        Log.i(TAG, "XMFFmpegCommand progress " + progress);
                         mListener.onProgress(progress);
                     }
                     break;
 
-                /*Native layer ffmepg video synthesis has stopped*/
+                /*Native layer ffmpeg video synthesis has stopped*/
                 case FFmpegCommand.FFCMD_INFO_STOPPED:
-                    if(ffcmd != null) {
-                        ffcmd.setStatus(false);
-                    }
+                    Log.i(TAG, "XMFFmpegCommand stop");
+                    setStatus(false);
 
-                    if(mListener != null) {
+                    if (mListener != null) {
                         mListener.onStopped();
                     }
-
-                    if(needRelease)
-                    {
-                        needRelease = false;
-                        ffcmd.release();
-                        ffcmd.setListener(null);
-                        ffcmd = null;
-                    }
-                    Log.d(TAG, "XMFFmpegCommand stop");
                     break;
 
-                /*Native layer ffmepg video synthesis has completed*/
+                /*Native layer ffmpeg video synthesis has completed*/
                 case FFmpegCommand.FFCMD_INFO_COMPLETED:
-                    if(ffcmd != null) {
-                        ffcmd.setStatus(false);
-                    }
+                    Log.i(TAG, "XMFFmpegCommand completed");
+                    setStatus(false);
 
-                    if(mListener != null) {
+                    if (mListener != null) {
                         mListener.onCompleted();
                     }
-                    if(!TextUtils.isEmpty(mConcatListFilePath)) {
-                        File file = new File(mConcatListFilePath);
+                    if (!TextUtils.isEmpty(mConcatFilePath)) {
+                        File file = new File(mConcatFilePath);
                         if (file.exists())
                             file.delete();
                     }
-                    Log.d(TAG, "XMFFmpegCommand completed");
                     break;
                 default:
                     Log.i(TAG, "Unknown message type " + arg1);
@@ -354,98 +512,34 @@ public class VideoSynthesis {
 
         @Override
         public void onError(int arg1, int arg2, Object obj) {
-            if(ffcmd != null) {
-                ffcmd.setStatus(false);
-            }
+            setStatus(false);
 
-            if(mListener != null)
+            if (mListener != null)
                 mListener.onError();
             Log.e(TAG, "XMFFmpegCommand error arg1 " + arg1 + " arg2 " + arg2 + ", please release VideoSynthesis.");
         }
     };
 
-    private void FFCmdStart(FFCmdType type) {
-        switch(type) {
-            case PIP_MERGE:
-                FFMpegPipMerge();
-                break;
-            case VIDEO_CONCAT:
-                FFMpegConcat();
-                break;
-            default:
-                Log.i(TAG, "Unknown FFCmdType " + type);
-                break;
-        }
+    synchronized private void setStatus(boolean running) {
+        mRunning = running;
     }
 
-    private void FFMpegPipMerge() {
-        if(mPipParams == null)
-        {
-            Log.e(TAG, "mPipParams is null,FFMpegPipMerge stop");
-            if(mListener != null) {
+    private boolean getStatus() {
+        return mRunning;
+    }
+
+    private void FFMpegCmdRun() {
+        if (mCmdParams == null) {
+            Log.e(TAG, "input is invalid, FFMpegCmdRun stop");
+            if (mListener != null) {
                 mListener.onStopped();
             }
             return;
         }
-
-        String[] cmd = {
-                "ffmpeg",
-                "-i", mRawVideoMetaData.mPath,
-                "-i", mCameraVideoMetaData.mPath,
-                "-i", mWatermarkMetaData.mPath,
-                "-filter_complex",
-                "[0:v] fps=15,scale="+mPipParams.raw_w+":"+mPipParams.raw_h+" [base];" +
-                "[1:v] fps=15,scale="+mPipParams.camera_w+":"+mPipParams.camera_h+" [camera];" +
-                "[2:v] scale="+mPipParams.watermark_w+":"+mPipParams.watermark_h+" [watermark];" +
-                "[base][watermark] overlay=x='if(gte("+Math.floor((double)mPipParams.camera_duration/(double)1000)+",t),"+mPipParams.watermark_overlay_x+","+Integer.MAX_VALUE+")'" +
-                                         ":y='if(gte("+Math.floor((double)mPipParams.camera_duration/(double)1000)+",t),"+mPipParams.watermark_overlay_y+","+Integer.MAX_VALUE+")' [tmp];" +
-                "[tmp][camera] overlay=repeatlast=0:x="+mPipParams.camera_overlay_x+":y="+mPipParams.camera_overlay_y+" [vout]",
-                "-map", "[vout]",
-                "-map", "0:a",
-                "-c:v", "libx264",
-                "-tune", "zerolatency",
-                "-r", "15",
-                "-force_key_frames", "expr:gte(t,n_forced*5)",
-                "-pix_fmt", "yuv420p",
-                "-vb", mBitrate+"k",
-                "-c:a", "copy",
-                "-shortest",
-                "-movflags", "faststart",
-                "-preset", "veryfast",
-                "-crf", "23.0",
-                "-f", "mp4",
-                "-y", mOutputPath
-        };
-
-        if(ffcmd != null)
-            ffcmd.start(cmd.length, cmd);
-    }
-
-    private void FFMpegConcat() {
-        if(TextUtils.isEmpty(mConcatListFilePath)
-                || TextUtils.isEmpty(mOutputPath))
-        {
-            Log.e(TAG, "concat : input is invalid,FFMpegConcat stop");
-            if(mListener != null) {
-                mListener.onStopped();
-            }
-            return;
+        String[] array = mCmdParams.toArray(new String[0]);
+        if (mFFcmd != null && array.length != 0) {
+            mFFcmd.start(array.length, array);
         }
-
-        String[] cmd = {
-                "ffmpeg",
-                "-f", "concat",
-                "-safe", "0",
-                "-i", mConcatListFilePath,
-                "-an",
-                "-c:v", "copy",
-                "-movflags", "faststart",
-                "-f", "mp4",
-                "-y", mOutputPath
-        };
-
-        if(ffcmd != null)
-            ffcmd.start(cmd.length, cmd);
     }
 
     public interface IVideoSynthesisListener {
@@ -465,7 +559,7 @@ public class VideoSynthesis {
         void onError();
     }
 
-    public class MetaData {
+    public static class MetaData {
         /*video type,example RAW_VIDEO_TYPE/CAMERA_VIDEO_TYPE etc.*/
         public String mType;
         /*Video file path*/
@@ -484,36 +578,20 @@ public class VideoSynthesis {
     }
 
     /*Rectangular position coordinates*/
-    public class Rect {
-        public float left_x;
-        public float left_y;
-        public float right_x;
-        public float right_y;
+    public static class Rect {
+        public float left;
+        public float bottom;
+        public float right;
+        public float top;
 
         public Rect() {
         }
 
-        public Rect(float left_x, float left_y, float right_x, float right_y) {
-            this.left_x = left_x;
-            this.left_y = left_y;
-            this.right_x = right_x;
-            this.right_y = right_y;
-        }
-    }
-
-    private enum FFCmdType {
-        NONE(-1),
-        PIP_MERGE(0),
-        VIDEO_CONCAT(1);
-
-        private final int value;
-
-        FFCmdType(int value) {
-            this.value = value;
-        }
-
-        public int getValue() {
-            return value;
+        public Rect(float left, float bottom, float right, float top) {
+            this.left = left;
+            this.bottom = bottom;
+            this.right = right;
+            this.top = top;
         }
     }
 

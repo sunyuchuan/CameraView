@@ -33,6 +33,7 @@ import java.nio.IntBuffer;
 
 public class OpenGlUtils {
     public static final int NO_TEXTURE = -1;
+    public static final int NOT_INIT = -1;
 
     public static int loadTexture(final Bitmap img, final int usedTexId) {
         return loadTexture(img, usedTexId, true);
@@ -204,5 +205,17 @@ public class OpenGlUtils {
         GLES20.glTexParameterf(GLES11Ext.GL_TEXTURE_EXTERNAL_OES,
                 GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE);
         return textures[0];
+    }
+
+    /**
+     * Checks to see if a GLES error has been raised.
+     */
+    public static void checkGlError(String op) {
+        int error = GLES20.glGetError();
+        if (error != GLES20.GL_NO_ERROR) {
+            String msg = op + ": glError 0x" + Integer.toHexString(error);
+            Log.e("OpenGlUtils", msg);
+            throw new RuntimeException(msg);
+        }
     }
 }

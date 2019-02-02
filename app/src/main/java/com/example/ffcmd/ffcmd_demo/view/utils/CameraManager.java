@@ -24,7 +24,7 @@ public class CameraManager {
     private Camera mCameraInstance;
     private CameraHelper mCameraHelper;
     private CameraView mCameraView;
-    private int mWindowRotation = 0;
+    private int mWindowRotation = 1;
     private IXMCameraRecorderListener mListener = null;
 
     public static CameraManager getInstance() {
@@ -34,7 +34,7 @@ public class CameraManager {
         return mInstance;
     }
 
-    private CameraManager() {
+    public CameraManager() {
         mCameraHelper = new CameraHelper();
     }
 
@@ -68,6 +68,24 @@ public class CameraManager {
         releaseCamera();
     }
 
+    public void releaseInstance() {
+        if (mCameraInstance != null) {
+            synchronized (mCameraInstance) {
+                mCameraInstance.setPreviewCallbackWithBuffer(null);
+                mCameraInstance.setPreviewCallback(null);
+                mCameraInstance.stopPreview();
+                mCameraInstance.release();
+                if(mListener != null)
+                    mListener.onPreviewStopped();
+            }
+        }
+        mCameraInstance = null;
+        mCameraHelper = null;
+        mCameraView = null;
+        mListener = null;
+        mInstance = null;
+    }
+
     public void startPreview() {
         if(mCameraInstance != null)
             mCameraInstance.startPreview();
@@ -89,7 +107,26 @@ public class CameraManager {
     }
 
     private void setUpCamera(final int id) {
-        mCameraInstance = getCameraInstance(id);
+        int cameraId = -1;
+        int cameraNum = getNumberOfCameras();
+        Log.i(TAG,"the number of cameras is " + cameraNum);
+        if(cameraNum > id) {
+            cameraId = id;
+        } else if(cameraNum == 1) {
+            cameraId = Camera.CameraInfo.CAMERA_FACING_BACK;
+        } else {
+            mListener.onPreviewError();
+            Log.e(TAG,"Didn't find the camera");
+            return;
+        }
+
+        mCameraInstance = getCameraInstance(cameraId);
+        if (mCameraInstance == null) {
+            mListener.onPreviewError();
+            Log.e(TAG,"get camera " + cameraId + " fail");
+            return;
+        }
+        mCurrentCameraId = cameraId;
 
         Camera.Parameters parameters = mCameraInstance.getParameters();
         List<String> supportedFocusModes = parameters.getSupportedFocusModes();
@@ -140,13 +177,14 @@ public class CameraManager {
 
         mCameraInstance.setParameters(parameters);
 
-        int orientation = mCameraHelper.getCameraDisplayOrientation(mWindowRotation, mCurrentCameraId);
-        Log.i(TAG,"mWindowRotation " + mWindowRotation + " mCurrentCameraId " + mCurrentCameraId + ", result of orientation is " + orientation);
+        int orientation = mCameraHelper.getCameraDisplayOrientation(mWindowRotation, cameraId);
+        Log.i(TAG,"mWindowRotation " + mWindowRotation + " cameraId " + cameraId + ", result of orientation is " + orientation);
         CameraHelper.CameraInfo2 cameraInfo = new CameraHelper.CameraInfo2();
-        mCameraHelper.getCameraInfo(mCurrentCameraId, cameraInfo);
+        mCameraHelper.getCameraInfo(cameraId, cameraInfo);
         boolean flipHorizontal = cameraInfo.facing == Camera.CameraInfo.CAMERA_FACING_FRONT;
+        boolean flipVertical = cameraInfo.facing == Camera.CameraInfo.CAMERA_FACING_BACK;
 
-        mCameraView.setUpCamera(mCameraInstance, orientation, flipHorizontal, false);
+        mCameraView.setUpCamera(mCameraInstance, orientation, flipHorizontal, flipVertical);
     }
 
     private Camera getCameraInstance(final int id) {
@@ -159,20 +197,35 @@ public class CameraManager {
         return c;
     }
 
+    private int getNumberOfCameras() {
+        return mCameraHelper.getNumberOfCameras();
+    }
+
     private Camera.Size getPreviewSize(Camera.Size resolution, List<Camera.Size> sizes) {
-        float diff = 100f;
+        float diff_d = 100f;
         float xdy = (float) resolution.width / (float) resolution.height;
-        Camera.Size best = null;
+        long diff_m = Long.MAX_VALUE;
+        long xmy = resolution.width * resolution.height;
+        Camera.Size best = sizes.get(0);
         for (Camera.Size size : sizes) {
+            Log.i(TAG, "size.width "+size.width+" size.height "+size.height);
             if (size.equals(resolution)) {
+                Log.i(TAG, "best.width "+size.width+" best.height "+size.height);
                 return size;
             }
-            float tmp = Math.abs(((float) size.width / (float) size.height) - xdy);
-            if (tmp < diff) {
-                diff = tmp;
-                best = size;
+
+            float tmp_d = Math.abs(((float) size.width / (float) size.height) - xdy);
+            if (tmp_d <= diff_d) {
+                diff_d = tmp_d;
+                long tmp_m = Math.abs(size.width * size.height - xmy);
+                if(tmp_m < diff_m)
+                {
+                    diff_m = tmp_m;
+                    best = size;
+                }
             }
         }
+        Log.i(TAG, "best.width "+best.width+" best.height "+best.height);
         return best;
     }
 
@@ -181,6 +234,7 @@ public class CameraManager {
         int[] closestRange = fpsRanges.get(0);
         int measure = Math.abs(closestRange[0] - expectedFps) + Math.abs(closestRange[1] - expectedFps);
         for (int[] range : fpsRanges) {
+            Log.i(TAG, "range[0] "+range[0]+" range[1] "+range[1]);
             if (range[0] == range[1]) {
                 int curMeasure = Math.abs(range[0] - expectedFps) + Math.abs(range[1] - expectedFps);
                 if (curMeasure < measure) {
@@ -189,15 +243,18 @@ public class CameraManager {
                 }
             }
         }
+        Log.i(TAG, "closestRange[0] "+closestRange[0]+" closestRange[1] "+closestRange[1]);
         return closestRange;
     }
 
     private void releaseCamera() {
-        if(mCameraInstance != null) {
-            mCameraInstance.setPreviewCallbackWithBuffer(null);
-            mCameraInstance.setPreviewCallback(null);
-            mCameraInstance.stopPreview();
-            mCameraInstance.release();
+        if (mCameraInstance != null) {
+            synchronized (mCameraInstance) {
+                mCameraInstance.setPreviewCallbackWithBuffer(null);
+                mCameraInstance.setPreviewCallback(null);
+                mCameraInstance.stopPreview();
+                mCameraInstance.release();
+            }
             mCameraInstance = null;
         }
         mListener.onPreviewStopped();

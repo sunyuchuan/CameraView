@@ -10,12 +10,12 @@ import android.support.v7.widget.LinearLayoutManager;
 import android.support.v7.widget.RecyclerView;
 import android.util.Log;
 import android.view.View;
+import android.widget.Button;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
 
 import com.example.ffcmd.ffcmd_demo.camera_preview.FilterAdapter;
 import com.example.ffcmd.ffcmd_demo.view.CameraView;
-import com.example.ffcmd.ffcmd_demo.view.gpuimage.filter.GPUImageFilterFactory;
 import com.example.ffcmd.ffcmd_demo.view.utils.XMFilterType;
 
 public class CameraPreviewActivity extends AppCompatActivity implements View.OnClickListener {
@@ -24,7 +24,7 @@ public class CameraPreviewActivity extends AppCompatActivity implements View.OnC
     private static final int VFPS = 15;
     private static final int PREVIEW_W = 960;
     private static final int PREVIEW_H = 540;
-
+    private boolean mRecording;
     private CameraView mCameraView;
     private LinearLayout mPasterLayout;
     private RecyclerView mPasterListView;
@@ -32,7 +32,9 @@ public class CameraPreviewActivity extends AppCompatActivity implements View.OnC
     private boolean has_btn_paster = false;
     private boolean has_btn_record = false;
     private boolean has_btn_preview = false;
-    private ImageButton mRecordButton = null;
+    private Button mRecordButton = null;
+    private Button mPlayerButton = null;
+    private boolean mPlaying;
     private static final String mOutputPath = "/sdcard/camera_test.mp4";
 
     private final XMFilterType[] pasterTypes = new XMFilterType[] {
@@ -56,9 +58,10 @@ public class CameraPreviewActivity extends AppCompatActivity implements View.OnC
         setContentView(R.layout.activity_camera_preview);
         findViewById(R.id.button_choose_filter).setOnClickListener(this);
         findViewById(R.id.button_preview).setOnClickListener(this);
-        mRecordButton = (ImageButton)findViewById(R.id.button_record);
+        mRecordButton = (Button)findViewById(R.id.button_record);
         mRecordButton.setOnClickListener(this);
-
+        mPlayerButton = (Button) findViewById(R.id.player);
+        mPlayerButton.setOnClickListener(this);
         //
         View cameraSwitchView = findViewById(R.id.img_switch_camera);
         cameraSwitchView.setOnClickListener(this);
@@ -82,7 +85,7 @@ public class CameraPreviewActivity extends AppCompatActivity implements View.OnC
             mCameraView.setWindowRotation(rotation);
             mCameraView.setExpectedFps(VFPS);
             mCameraView.setExpectedResolution(PREVIEW_W, PREVIEW_H);
-            mCameraView.setListener(onCameraRecorderListener);
+            mCameraView.setListener(mOnCameraRecorderListener);
         }
     }
 
@@ -144,6 +147,22 @@ public class CameraPreviewActivity extends AppCompatActivity implements View.OnC
                     mCameraView.stopCameraPreview();
                 }
                 break;
+            case R.id.player:
+                if (mPlaying) {
+                    mCameraView.stopVideoPlayer();
+                    mCameraView.stopCameraPreview();
+                    mPlaying = false;
+                    mPlayerButton.setBackgroundResource(R.color.gray);
+                } else {
+                    mCameraView.setPipRectCoordinate(new float[] {0.1f, 0.1f, 0.4f, 0.4f});
+                    mCameraView.startVideoPlayer("/sdcard/y_bg.mp4");
+                    mCameraView.startCameraPreview();
+                    mPlaying = true;
+                    mPlayerButton.setBackgroundResource(R.color.green);
+                }
+                break;
+            default:
+                break;
         }
     }
 
@@ -152,9 +171,9 @@ public class CameraPreviewActivity extends AppCompatActivity implements View.OnC
         public void onFilterChanged(XMFilterType filterType, boolean show, boolean switch_filter) {
             Log.i(TAG, "onFilterChanged setFilter filterType "+filterType.getValue());
             if(show)
-                mCameraView.setFilter(GPUImageFilterFactory.CreateFilter(filterType));
+                mCameraView.setFilter(filterType);
             else if(!switch_filter)
-                mCameraView.setFilter(GPUImageFilterFactory.CreateFilter(XMFilterType.NONE));
+                mCameraView.setFilter(XMFilterType.NONE);
         }
     };
 
@@ -217,17 +236,26 @@ public class CameraPreviewActivity extends AppCompatActivity implements View.OnC
         animator.start();
     }
 
-    private CameraView.ICameraViewListener onCameraRecorderListener = new CameraView.ICameraViewListener() {
+    private CameraView.ICameraViewListener mOnCameraRecorderListener = new CameraView.ICameraViewListener() {
         @Override
         public void onRecorderStarted() {
+            mRecording = true;
+            mRecordButton.setBackgroundResource(R.color.green);
             Log.i(TAG, "onRecorderStarted");
-            mRecordButton.setImageDrawable(getResources().getDrawable(R.drawable.icon_video));
         }
 
         @Override
         public void onRecorderStopped() {
+            mRecording = false;
+            mRecordButton.setBackgroundResource(R.color.gray);
             Log.i(TAG, "onRecorderStopped");
-            mRecordButton.setImageDrawable(getResources().getDrawable(R.drawable.record_video));
+        }
+
+        @Override
+        public void onRecorderError() {
+            mRecording = false;
+            mRecordButton.setBackgroundResource(R.color.gray);
+            Log.i(TAG, "onRecorderError");
         }
 
         @Override
@@ -238,6 +266,11 @@ public class CameraPreviewActivity extends AppCompatActivity implements View.OnC
         @Override
         public void onPreviewStopped() {
             Log.i(TAG, "onPreviewStopped");
+        }
+
+        @Override
+        public void onPreviewError() {
+            Log.i(TAG, "onPreviewError");
         }
     };
 }

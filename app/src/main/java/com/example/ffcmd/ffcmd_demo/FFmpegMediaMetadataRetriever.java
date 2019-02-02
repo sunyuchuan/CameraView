@@ -24,6 +24,8 @@ import android.content.Context;
 import android.content.res.AssetFileDescriptor;
 import android.graphics.Bitmap;
 import android.net.Uri;
+import android.os.Build;
+import android.util.Log;
 
 import java.io.FileDescriptor;
 import java.io.FileNotFoundException;
@@ -53,7 +55,9 @@ public class FFmpegMediaMetadataRetriever {
     private static final IjkLibLoader sLocalLibLoader = new IjkLibLoader() {
         @Override
         public void loadLibrary(String libName) throws UnsatisfiedLinkError, SecurityException {
-            System.loadLibrary(libName);
+            String ABI = Build.CPU_ABI;
+            Log.i(TAG, "ABI " + ABI + " libName " +libName);
+            System.loadLibrary(libName + "-" + ABI);
         }
     };
 

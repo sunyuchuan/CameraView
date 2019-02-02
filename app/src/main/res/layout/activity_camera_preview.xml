@@ -30,19 +30,26 @@
             android:id="@+id/button_choose_filter"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Choose Filter" />
+            android:text="Filter" />
 
         <Button
             android:id="@+id/button_preview"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="preview" />
-
-        <ImageButton
+        <Button
             android:id="@+id/button_record"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:src="@drawable/record_video" />
+            android:text="record" />
+        <Button
+            android:id="@+id/player"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_alignRight="@+id/camera_recorder"
+            android:layout_centerVertical="true"
+            android:layout_marginRight="-140dp"
+            android:text="player" />
     </LinearLayout>
 
     <include

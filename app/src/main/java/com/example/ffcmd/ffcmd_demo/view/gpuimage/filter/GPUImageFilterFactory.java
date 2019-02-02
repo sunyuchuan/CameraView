@@ -16,6 +16,12 @@ public class GPUImageFilterFactory {
                 ((GPUImageFilterGroup) filter).addFilter(new GPUImageBeautyFilter(5));
                 ((GPUImageFilterGroup) filter).addFilter(new GPUImageBrightnessFilter(0.05f));
                 break;
+            case FILTER_CAMERA_INPUT:
+                filter = new GPUImageCameraInputFilter();
+                break;
+            case FILTER_PIP:
+                filter = new GPUImagePIPFilter();
+                break;
             default:
                 filter = new GPUImageFilter();
                 break;

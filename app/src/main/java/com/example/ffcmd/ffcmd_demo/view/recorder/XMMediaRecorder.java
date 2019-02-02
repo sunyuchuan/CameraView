@@ -6,6 +6,9 @@ import android.os.Looper;
 import android.os.Message;
 import android.util.Log;
 
+import com.example.ffcmd.ffcmd_demo.AccessedByNative;
+import com.example.ffcmd.ffcmd_demo.IjkLibLoader;
+
 import java.lang.ref.WeakReference;
 
 /**
@@ -14,8 +17,10 @@ import java.lang.ref.WeakReference;
 
 public class XMMediaRecorder {
     private static final String TAG = "XMMediaRecorder";
+    private static boolean mIsLibLoaded = false;
     private EventHandler mEventHandler;
     private IXMCameraRecorderListener mListener = null;
+    @AccessedByNative
     private long mNativeXMMediaRecorder = 0;
     private boolean mUseSoftEncoder = false;
     private boolean mAudioEnable = false;
@@ -32,15 +37,28 @@ public class XMMediaRecorder {
     private static final int MR_MSG_STARTED = 200;
     private static final int MR_MSG_STOPPED = 300;
 
-    public boolean mRecording = false;
+    private static final IjkLibLoader sLocalLibLoader = new IjkLibLoader() {
+        @Override
+        public void loadLibrary(String libName) throws UnsatisfiedLinkError, SecurityException {
+            String ABI = Build.CPU_ABI;
+            Log.i(TAG, "ABI " + ABI + " libName " +libName);
+            System.loadLibrary(libName + "-" + ABI);
+        }
+    };
 
-    static {
-        String ABI = Build.CPU_ABI;
-        Log.d(TAG, "ABI " + ABI);
-        System.loadLibrary("ijkffmpeg-" + ABI);
-        System.loadLibrary("ijksdl-" + ABI);
-        System.loadLibrary("ijkplayer-" + ABI);
-        System.loadLibrary("xmrecorder-" + ABI);
+    private static void loadLibrariesOnce(IjkLibLoader libLoader) {
+        synchronized (XMMediaRecorder.class) {
+            if (!mIsLibLoaded) {
+                if (libLoader == null)
+                    libLoader = sLocalLibLoader;
+
+                libLoader.loadLibrary("ijkffmpeg");
+                libLoader.loadLibrary("ijksdl");
+                libLoader.loadLibrary("ijkplayer");
+                libLoader.loadLibrary("xmrecorder");
+                mIsLibLoaded = true;
+            }
+        }
     }
 
     public static XMMediaRecorder getInstance(boolean useSoftEncoder, boolean hasAudio, boolean hasVideo) {
@@ -64,8 +82,18 @@ public class XMMediaRecorder {
         native_setup(new WeakReference<XMMediaRecorder>(this), mUseSoftEncoder, mAudioEnable, mVideoEnable);
     }
 
-    private XMMediaRecorder(boolean useSoftEncoder, boolean hasAudio, boolean hasVideo)
+    public XMMediaRecorder(boolean useSoftEncoder, boolean hasAudio, boolean hasVideo)
     {
+        loadLibrariesOnce(sLocalLibLoader);
+        mUseSoftEncoder = useSoftEncoder;
+        mAudioEnable = hasAudio;
+        mVideoEnable = hasVideo;
+        initRecorder();
+    }
+
+    public XMMediaRecorder(IjkLibLoader libLoader, boolean useSoftEncoder, boolean hasAudio, boolean hasVideo)
+    {
+        loadLibrariesOnce(libLoader);
         mUseSoftEncoder = useSoftEncoder;
         mAudioEnable = hasAudio;
         mVideoEnable = hasVideo;
@@ -95,19 +123,22 @@ public class XMMediaRecorder {
 
     public void release() {
         _release();
+        mEventHandler = null;
+        mListener = null;
         mRecorder = null;
     }
 
-    public void put(byte[] data, int w, int h, int rotate_degrees, boolean flipHorizontal, boolean flipVertical) {
+    public void put(byte[] data, int w, int h, int pixelStride, int rowPadding,
+                    int rotate_degrees, boolean flipHorizontal, boolean flipVertical) {
         if(data != null && w > 0 && h > 0)
-            _put(data, w, h, rotate_degrees, flipHorizontal, flipVertical);
+            _put(data, w, h, pixelStride, rowPadding, rotate_degrees, flipHorizontal, flipVertical);
     }
 
     public static native void NV21toABGR(byte[] yuv, int width, int height, byte[] gl_out);
     private native boolean _setConfigParams(int[] intParams, String[] stringParams);
     private native void _start();
     private native void _stop();
-    private native void _put(byte[] data, int w, int h, int rotate_degrees, boolean flipHorizontal, boolean flipVertical);
+    private native void _put(byte[] data, int w, int h, int pixelStride, int rowPadding, int rotate_degrees, boolean flipHorizontal, boolean flipVertical);
     private native void native_setup(Object CameraRecoder_this, boolean useSoftEncoder, boolean audioEnable, boolean videoEnable);
     public native void native_finalize();
     private native void _reset();
@@ -145,6 +176,11 @@ public class XMMediaRecorder {
             mListener.onRecorderStopped();
     }
 
+    private final void onRecorderError() {
+        if(mListener != null)
+            mListener.onRecorderError();
+    }
+
     private static class EventHandler extends Handler {
         private final WeakReference<XMMediaRecorder> mWeakRecoder;
 
@@ -162,7 +198,7 @@ public class XMMediaRecorder {
 
             switch (msg.what) {
                 case RECORDER_NOP:
-                    Log.d(TAG, "msg_loop nop");
+                    Log.i(TAG, "msg_loop nop");
                     break;
                 case RECORDER_PREPARED:
                     recoder.onRecorderPrepared();
@@ -174,11 +210,25 @@ public class XMMediaRecorder {
                         recoder.onRecorderStopped();
                     break;
                 case RECORDER_COMPLETED:
-                    Log.d(TAG, "RECORDER_COMPLETED");
+                    Log.i(TAG, "RECORDER_COMPLETED");
+                    return;
+                case RECORDER_ERROR:
+                    Log.i(TAG, "RECORDER_ERROR");
+                    recoder.onRecorderError();
                     return;
                 default:
                     Log.i(TAG, "Unknown message type " + msg.what);
             }
+        }
+    }
+
+    @Override
+    protected void finalize() throws Throwable {
+        Log.i(TAG, "finalize");
+        try {
+            native_finalize();
+        } finally {
+            super.finalize();
         }
     }
 }
